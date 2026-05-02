@@ -1,10 +1,4 @@
 import nlp from 'compromise';
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-import syllables from 'compromise-syllables';
-
-// Register the syllables plugin once
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(nlp as any).plugin(syllables);
 
 export interface ReadabilityIndices {
   fleschReadingEase: number;
@@ -30,37 +24,50 @@ export interface ReadabilityResult {
   stats: TextStats;
 }
 
-interface SyllableEntry {
-  text: string;
-  syllables: string[];
+/**
+ * Syllable counter — faithful TypeScript port of the Python fallback in the
+ * original readability tool (vowel-after-consonant transition counting).
+ */
+function countSyllables(word: string): number {
+  const letters = word.toLowerCase().split('').filter((c) => /[a-z]/.test(c));
+  if (!letters.length) return 1;
+
+  let count = 0;
+  let lastWasVowel = false;
+
+  for (const char of letters) {
+    const isVowel = 'aeiouy'.includes(char);
+    if (!lastWasVowel && isVowel) count++;
+    lastWasVowel = isVowel;
+  }
+
+  return Math.max(count, 1);
 }
 
 export function calculateReadability(text: string): ReadabilityResult {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const doc = (nlp as any)(text);
 
-  // Sentence count — compromise sentence splitter
+  // Sentence count via compromise sentence splitter
   const sentences: string[] = doc.sentences().out('array');
   const nbSentences = Math.max(sentences.length, 1);
 
-  // Syllable data for all terms in the document
-  const syllableData: SyllableEntry[] = doc.syllables();
+  // Word tokens — compromise strips punctuation from .terms()
+  const allTerms: string[] = doc.terms().out('array');
 
-  // Filter to real words: must contain at least one letter, not purely numeric
-  const wordData = syllableData.filter(
-    (item) => /[a-zA-Z]/.test(item.text) && !/^\d+(\.\d+)?$/.test(item.text.trim())
+  // Filter out pure numbers; keep anything with at least one letter
+  const words = allTerms.filter(
+    (t: string) => /[a-zA-Z]/.test(t) && !/^\d+(\.\d+)?$/.test(t.trim())
   );
 
-  const nbWords = wordData.length;
+  const nbWords = words.length;
 
-  const syllableCounts = wordData.map((item) =>
-    Math.max(item.syllables ? item.syllables.length : 1, 1)
-  );
+  // Syllable counts using the ported Python algorithm
+  const syllableCounts = words.map((w: string) => countSyllables(w));
+  const nbSyllables = syllableCounts.reduce((a: number, b: number) => a + b, 0);
+  const nbComplexWords = syllableCounts.filter((s: number) => s >= 3).length;
 
-  const nbSyllables = syllableCounts.reduce((a, b) => a + b, 0);
-  const nbComplexWords = syllableCounts.filter((s) => s >= 3).length;
-
-  // Character count: lowercase + uppercase letters only (matches Python logic)
+  // Character count: letters only (matches Python: char in "abcdefghijklmnopqrstuvwxyz")
   const nbCharacters = (text.match(/[a-zA-Z]/g) ?? []).length;
 
   // Averages
